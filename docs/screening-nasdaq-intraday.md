@@ -54,12 +54,32 @@ Round-Trip + 1,0 bps Stop-Slippage.
   wird genau einmal verschossen — in `/colab`, für den einen Kandidaten, der die
   Triage-Schwelle deutlich überschreitet. Danach ist er verbrannt.
 
-## Nächster Schritt
+## Triage-Ergebnis (Lauf 2026-09-01, Training 2012-01-02 – 2022-03-31)
 
-1. `backtests/triage_nasdaq_intraday.py` in eine Colab-Zelle einfügen und laufen lassen
-   (~5–10 Min beim ersten Lauf).
-2. Ergebnis-Tabelle zurückmelden. Bei Sharpe ≥ 1,2 (und stabiler „ab 2018"-Spalte):
-   `/colab <Kandidat>` für die volle Validierung inkl. Permutationstest, Block-Bootstrap
-   und dem einmaligen Holdout-Test.
-3. Reißt nichts die Schwelle: leere Runde akzeptieren, nächstes Screening auf anderem
-   Markt/Mechanismus — nicht dieselben Ideen mit anderen Parametern wiederholen.
+**Leere Runde: 0 von 8 Ideen erreichte die PROMOTE-Schwelle (Sharpe ≥ 1,2).**
+
+| Idee | Sharpe | ab 2018 | CAGR % | MaxDD % | Trades | Kosten/Brutto % | Verdikt |
+|---|---|---|---|---|---|---|---|
+| S5 Overnight-Prämie | 0,79 | 0,71 | 8,7 | −22,0 | 2666 | 21,9 | **KILL** — reines Beta: schlechter als Buy-and-Hold NDX (Sharpe ~1,0 im selben Fenster), Mechanismus lt. NY Fed seit 2021 zerfallen |
+| S3 OPEX-Reversal | 0,68 | 1,10 | 1,4 | −2,7 | 123 | 7,8 | **PARK** — einziger Kandidat, der sich ab 2018 mechanismus­konform *verstärkt*; für Signifikanz fehlen Events (12/Jahr). Reaktivierbar mit längerer NQ-Historie (ab ~2005) oder nach ~2 Jahren Live-Beobachtung |
+| S2 ORB 5-Min | 0,33 | 0,45 | 2,5 | −17,5 | 2570 | 60,5 | **KILL** — Kosten fressen 60 % des Bruttos; Paper-Ergebnis repliziert nicht mit ehrlicher Stop-Slippage |
+| S6 LETF-Schluss-Momentum | 0,32 | 0,61 | 1,1 | −6,9 | 720 | 36,2 | **KILL** — zu schwach, redundant zu S1 |
+| S4 Turn-of-Month | 0,28 | 0,27 | 1,8 | −11,8 | 122 | 5,3 | **KILL** — auf NDX-Intraday-Overlay kein verwertbarer Effekt |
+| S1 Intraday-Momentum | −0,06 | −0,13 | −0,4 | −21,3 | 1214 | 132 | **KILL** — Post-Publikations-Zerfall bestätigt |
+| S7 Ultimo NDX/TLT | −0,11 | −0,40 | −0,1 | −5,7 | 75 | >999 | **KILL** — Vorzeichen sogar falsch (Front-Running-These des Skeptikers bestätigt) |
+| S8 Margin-Rebound | −0,15 | −0,34 | −0,2 | −4,6 | 13 | >999 | **KILL** — 13 Trades, negativ |
+
+Der Holdout (ab 2022-04-01) wurde **nicht** angefasst und bleibt intakt.
+
+**Sperrliste-Eintrag:** Alle 8 getesteten Ideen plus die 3 Mechanismus-Kills (Pre-FOMC,
+0DTE-Pinning, Europa-Close) gelten für Nasdaq-100-Intraday als verworfen und werden nicht
+mit anderen Parametern erneut vorgeschlagen. Ausnahme: S3 (OPEX) ist geparkt, nicht verworfen.
+
+## Konsequenz
+
+Auf frei verfügbaren Daten und zu ehrlichen Kosten gibt es unter den dokumentierten
+Nasdaq-Intraday-Anomalien derzeit keinen belastbaren Bot-Kandidaten — das ist das erwartbare
+Ergebnis für den liquidesten Aktienindex-Markt der Welt. Nicht die Parameter nachjustieren,
+bis „etwas funktioniert": genau dafür existiert die Multiplizitätsschwelle. Sinnvolle nächste
+Züge: anderen Markt/Mechanismus screenen oder auf Tages-Horizont wechseln (Trendfolge/
+Vol-Targeting auf Futures), wo Kosten irrelevant sind und die Evidenzlage deutlich besser ist.
