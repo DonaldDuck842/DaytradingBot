@@ -71,6 +71,68 @@ BTC-Tage mit Range ≥ 4 %) — ~3.000 statt ~15.000 Dateien. Der BTC-Vorfilter 
 Obermenge der Trigger-Tage (Trigger 4,5 % > Filter 4,0 %), erzeugt also keinen Selektionsbias.
 **Holdout fest gepinnt ab 2023-06-01**, in diesem Skript nie angefasst.
 
+
+## Triage-Ergebnis (Lauf 2026-09-01, Training bis 2023-06-01)
+
+**Zweite leere Runde: 0 von 4 Ideen erreichte die Schwelle (Sharpe ≥ 1,2).**
+Kumuliert über beide Screening-Runden: **0 von 12 getesteten Ideen.**
+
+| Idee | Trades | Sharpe | t-Stat | Rend. %/J | MaxDD % | Kosten/Brutto % | Verdikt |
+|---|---|---|---|---|---|---|---|
+| K3 EURUSD Fix-Reversal | 100 | 0,24 | 0,79 | +0,24 | −2,3 | 27 | **KILL** |
+| K1 Erdgas EIA-Announcement | 543 | 0,07 | 0,22 | +0,03 | −30,6 | 77 | **KILL** |
+| K2 EURUSD Monatsende-Fix | 112 | −0,07 | −0,23 | −0,06 | −3,7 | 229 | **KILL** |
+| K4b Kontrolle (Kaskade als Momentum) | 244 | −0,16 | −0,38 | −4,56 | −43,7 | 216 | (Kontrolle) |
+| K4 BTC Liquidationskaskade (Reversion) | 244 | −0,71 | −1,64 | −14,06 | −62,8 | >999 | **KILL** |
+
+Kein t-Stat erreicht 2 — keine der Ideen ist statistisch von Null unterscheidbar.
+
+### Was die Zahlen mechanistisch sagen
+
+Aus der Kosten/Brutto-Spalte lässt sich der Brutto-Edge je Trade zurückrechnen. Das ist
+aufschlussreicher als der Sharpe:
+
+- **K1 Erdgas: 7,8 bps brutto − 6 bps Kosten = +1,8 bps netto je Trade.** Die Risikoprämie um
+  die EIA-Meldung **existiert**, ist aber kleiner als die Literatur nahelegt, und die Kosten
+  fressen 77 % davon. Selbst mit der optimistischsten Kostenannahme (NG-Future 3,3 bps statt
+  konservativ 6) käme man auf Sharpe ~0,2–0,3 — nicht in die Nähe der Schwelle. Der
+  Drawdown von −31 % zeigt zudem, wie brutal die Verteilung an Meldetagen ist.
+- **K2 EURUSD: 0,44 bps brutto — ein Zehntel der von Melvin/Prins (2015) implizierten ~5 bps.**
+  Der Effekt ist praktisch verschwunden. Plausibler Grund: die **WM/Reuters-Fix-Reform von 2015**
+  hat das Fixing-Fenster von 1 auf 5 Minuten verbreitert, genau um diesen Preisdruck zu
+  verdünnen. Der Zwang besteht weiter — die Marktstruktur, die ihn handelbar machte, nicht mehr.
+- **K4/K4b Bitcoin: nach einer Kaskade folgt kein Rückprall, sondern schwache Fortsetzung**
+  (~7 bps brutto in Momentum-Richtung, K4 verliert gross). Der Zwangs-Mechanismus ist real,
+  aber die Kompensation geht an jene, die **innerhalb von Sekunden** Liquidität stellen — nicht
+  an eine Position, die nach 60 Minuten einsteigt und 4 Stunden hält. Der Edge existiert auf
+  Market-Making-Zeitskala und ist für einen Retail-Bot strukturell unerreichbar.
+  Bei ~10–20 bps Round-Trip ist die Sache ohnehin entschieden.
+
+### Sperrliste-Eintrag
+
+Alle 4 getesteten Ideen dieser Runde plus die 6 Gate-Kills gelten als verworfen. Weiterhin
+geparkt (Mechanismus intakt, Daten fehlen): Treasury-Auktionszyklus, Funding-Carry,
+Goldman Roll, Krypto-ETF-Stunden.
+
+## Fazit nach zwei Runden
+
+12 Ideen aus publizierter Literatur und Strukturanalyse, über vier Anlageklassen, mit
+ehrlichen Kosten — **kein einziger belastbarer Intraday-Kandidat.** Das wiederkehrende
+Muster ist nicht Zufall, sondern hat drei Ursachen:
+
+1. **Kosten.** Intraday-Edges liegen typisch bei 3–10 bps je Trade. Genau in dieser
+   Größenordnung liegen die Handelskosten — außer im Future, wo die Konkurrenz am härtesten ist.
+2. **Publikationszerfall.** Jede Idee, die man online findet, ist per Definition publiziert.
+3. **Strukturwandel.** Zweimal war der Mechanismus nachweislich *abgeschafft* worden
+   (CME 24/7 seit 05/2026, WM/R-Fix-Reform 2015) — nicht wegarbitriert, sondern per
+   Regeländerung beseitigt.
+
+**Empfehlung:** Kein drittes Intraday-Screening. Wer einen belastbaren systematischen Edge
+sucht, muss den Horizont wechseln — Tages- bis Wochenhorizont (Time-Series-Momentum,
+Carry, Term-Structure über einen Korb liquider Futures). Dort sind die Kosten gegenüber der
+Signalgröße vernachlässigbar und die Evidenzlage um Größenordnungen besser. Das ist dann
+kein Daytrading-Bot mehr — das ist der Preis dafür, dass die Zahlen stimmen.
+
 ## Quellen
 
 - Reading: [The natural gas announcement day puzzle](https://centaur.reading.ac.uk/90003/1/NG_paper_final_round.pdf)
