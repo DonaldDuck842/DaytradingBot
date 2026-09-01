@@ -50,8 +50,10 @@ Round-Trip + 1,0 bps Stop-Slippage.
   Monat im URL-Pfad 0-indexiert; 24-Byte-Records `>u4×5 + f4`, Reihenfolge Open/Close/Low/High,
   Preis = int/1000; Zeitstempel UTC.
 - **Holdout:** die jüngsten 30 % der Sessions (Startdatum wird beim Triage-Lauf ausgegeben,
-  ≈ ab Mitte 2022). Wird genau einmal verschossen — in `/colab`, für den einen Kandidaten,
-  der die Triage-Schwelle deutlich überschreitet. Danach ist er verbrannt.
+  ≈ ab Mitte 2022). Das Datenende ist im Skript fest auf 2026-08-28 gepinnt, damit die
+  Quarantäne-Grenze über Wiederholungsläufe stabil bleibt. Der Holdout wird genau einmal
+  verschossen — in `/colab`, für den einen Kandidaten, der die Triage-Schwelle deutlich
+  überschreitet. Danach ist er verbrannt.
 
 ## Nächster Schritt
 
