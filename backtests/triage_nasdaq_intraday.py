@@ -7,9 +7,8 @@
 # Kosten:   1,0 bps Round-Trip pro Trade (MNQ ~0,4 bps + Puffer),
 #           Stop-Exits zusaetzlich 1,0 bps Slippage; Stops fuellen bei
 #           Gaps zum Open der ausloesenden Bar (konservativ)
-# Holdout:  Datenende ist FEST auf DATEN_ENDE gepinnt, damit die
-#           Quarantaene-Grenze (juengste 30 % der Sessions) ueber
-#           Wiederholungslaeufe stabil bleibt. Der Quarantaene-Zeitraum
+# Holdout:  Quarantaene-Grenze FEST auf QUARANTAENE_AB gepinnt (~juengste
+#           30 % der Historie bis DATEN_ENDE). Der Quarantaene-Zeitraum
 #           wird hier NIE angefasst — er gehoert dem einen /colab-Test.
 # Regeln:   EIN fester Parametersatz pro Idee, kein Sweep, keine Optimierung.
 #           Signale nutzen ausschliesslich Information vor dem Einstieg.
@@ -32,10 +31,11 @@ np.random.seed(42)
 # 1) KONFIG
 # ------------------------------------------------------------------
 START            = dt.date(2012, 1, 2)   # Dukascopy-m1-Historie beginnt 2011-09
-DATEN_ENDE       = dt.date(2026, 8, 28)  # FEST GEPINNT: haelt die Holdout-Grenze
-                                         # ueber alle Laeufe stabil. Nur bewusst
-                                         # aendern — /colab nutzt dieselbe Grenze.
-HOLDOUT_FRAC     = 0.30                  # juengste 30% der Sessions = Quarantaene
+DATEN_ENDE       = dt.date(2026, 8, 28)  # FEST GEPINNT: nur bewusst aendern
+QUARANTAENE_AB   = pd.Timestamp("2022-04-01")  # FEST GEPINNT (~juengste 30%):
+                                         # alles ab hier ist Holdout und wird in
+                                         # diesem Skript NIE angefasst; /colab
+                                         # nutzt exakt dieselbe Grenze.
 COST_RT_BPS      = 1.0                   # Round-Trip-Kosten pro Trade (MNQ + Puffer)
 STOP_SLIP_BPS    = 1.0                   # Zusatz-Slippage, wenn ein Stop ausloest
 SUBSAMPLE_START  = "2018-01-01"          # zweite Sharpe-Spalte (Regime-Check)
@@ -60,7 +60,7 @@ print("ANNAHMEN: 1-Min-BID-Kerzen Dukascopy (CFD-Quotes ~ CME-Preis); Ausfuehrun
 print(f"Bar-Preisen; {COST_RT_BPS} bps Round-Trip + {STOP_SLIP_BPS} bps Stop-Slippage;")
 print("Stops fuellen bei Gaps zum Open der ausloesenden Bar; keine Optimierung —")
 print(f"ein fester Parametersatz pro Idee; Datenende gepinnt auf {DATEN_ENDE};")
-print(f"juengste {int(HOLDOUT_FRAC*100)}% der Historie quarantaeniert fuer /colab.\n")
+print(f"QUARANTAENE fuer /colab: alles ab {QUARANTAENE_AB.date()} (fest gepinnt).\n")
 
 # ------------------------------------------------------------------
 # 2) DATENBESCHAFFUNG — Dukascopy-Tagesdateien (Monat im Pfad 0-indexiert!)
@@ -74,12 +74,12 @@ def tage_liste():
     return out
 
 def lade_tag(d):
-    """Laedt eine Tagesdatei (Cache zuerst). Rueckgabe: (datum, bytes|None)."""
+    """Laedt eine Tagesdatei (Cache zuerst). Rueckgabe: (datum, bytes|None, status)."""
     fn = os.path.join(CACHE_DIR, f"{d.isoformat()}.bi5")
     if os.path.exists(fn):
         with open(fn, "rb") as f:
             raw = f.read()
-        return d, (raw if raw else None)  # 0-Byte-Datei = bekannter Feiertag
+        return d, (raw if raw else None), ("ok" if raw else "leer")
     url = (f"https://datafeed.dukascopy.com/datafeed/{INSTRUMENT}/"
            f"{d.year}/{d.month-1:02d}/{d.day:02d}/BID_candles_min_1.bi5")
     for versuch in range(3):
@@ -92,31 +92,36 @@ def lade_tag(d):
                     tmp = fn + ".tmp"
                     open(tmp, "wb").close()
                     os.replace(tmp, fn)
-                return d, None
+                return d, None, "leer"
             if r.status_code == 200:
                 tmp = fn + ".tmp"        # atomar schreiben: nie halbe Dateien cachen
                 with open(tmp, "wb") as f:
                     f.write(r.content)
                 os.replace(tmp, fn)
-                return d, r.content
+                return d, r.content, "ok"
         except requests.RequestException:
             pass
         time.sleep(1 + versuch)
-    return d, None                        # nach 3 Versuchen aufgeben (Luecke)
+    return d, None, "fehler"              # nach 3 Versuchen aufgeben (Luecke!)
 
 tage = tage_liste()
 print(f"Lade {len(tage)} Handelstage {START} .. {DATEN_ENDE} von Dukascopy ...")
-rohdaten, fertig, t0 = {}, 0, time.time()
+rohdaten, fehl_tage, fertig, t0 = {}, set(), 0, time.time()
 with ThreadPoolExecutor(max_workers=N_JOBS) as ex:
     futs = {ex.submit(lade_tag, d): d for d in tage}
     for fut in as_completed(futs):
-        d, raw = fut.result()
+        d, raw, status = fut.result()
         if raw:
             rohdaten[d] = raw
+        elif status == "fehler":
+            fehl_tage.add(d)
         fertig += 1
         if fertig % max(1, len(tage)//10) == 0:
             print(f"  {fertig}/{len(tage)} Dateien, {len(rohdaten)} mit Daten "
                   f"({time.time()-t0:.0f}s)")
+if fehl_tage:
+    print(f"WARNUNG: {len(fehl_tage)} Tage nach 3 Versuchen ohne Antwort — Renditen "
+          "ueber diese Luecken werden maskiert.")
 
 if len(rohdaten) < 1500:
     sys.exit(f"ABBRUCH: nur {len(rohdaten)} Tagesdateien mit Daten — Dukascopy nicht "
@@ -206,6 +211,9 @@ S_full = pd.DataFrame({
 })
 S_full.index = pd.to_datetime(S_full.index)
 S_full = S_full.sort_index()
+# Datenstummel-Tage (Feed-Ausfall: <200 Bars, echte Halbtage haben ~210) haben
+# keinen brauchbaren Schlusskurs — NaN, damit Folgetags-Referenzen nicht verzerren.
+S_full.loc[S_full["bars"] < 200, "close_last"] = np.nan
 S_full["prev_close"]    = S_full["close_last"].shift(1)
 S_full["prev_bars"]     = S_full["bars"].shift(1)
 S_full["gap_tage"]      = S_full.index.to_series().diff().dt.days
@@ -213,6 +221,12 @@ S_full["ret_full"]      = S_full["close_last"].pct_change()
 # Renditen ueber Datenluecken (>4 Kalendertage: mehr als Wochenende+Feiertag)
 # sind keine Eintagesrenditen -> maskieren, damit kein Trigger darauf feuert.
 S_full.loc[S_full["gap_tage"] > 4, ["ret_full", "prev_close"]] = np.nan
+# Gleiches fuer Sessions direkt nach einem Tag, dessen Download scheiterte
+# (mitten in der Woche unsichtbar fuer die Kalendertage-Schwelle).
+for f in sorted(fehl_tage):
+    nach = S_full.index[S_full.index > pd.Timestamp(f)]
+    if len(nach):
+        S_full.loc[nach[0], ["ret_full", "prev_close"]] = np.nan
 S_full["prev_ret"] = S_full["ret_full"].shift(1)     # Vortagesrendite, ex ante bekannt
 
 def letzter_vor(minute, feld="close", fenster=15):
@@ -254,14 +268,13 @@ for d, g in rth.groupby("ny_date"):
     pfad[pd.Timestamp(d)] = (gt.values, g["high"].values, g["low"].values,
                              g["close"].values, g["open"].values)
 
-# --- HOLDOUT-QUARANTAENE: juengste 30% NIE anfassen -----------------
-n_cut = int(len(S) * (1 - HOLDOUT_FRAC))
-QUARANTAENE_AB = S.index[n_cut]
-train = S.iloc[:n_cut].copy()
+# --- HOLDOUT-QUARANTAENE: fest gepinnte Kalendergrenze, NIE anfassen ----
+train = S[S.index < QUARANTAENE_AB].copy()
 train_full = S_full[S_full.index < QUARANTAENE_AB]   # fuer S4 (inkl. Halbtage)
+n_hold = int((S.index >= QUARANTAENE_AB).sum())
 print(f"\n{len(S)} volle Sessions. TRAINING: {train.index[0].date()} .. "
-      f"{train.index[-1].date()}  |  QUARANTAENE (nur fuer /colab): ab "
-      f"{QUARANTAENE_AB.date()} ({len(S)-n_cut} Sessions)\n")
+      f"{train.index[-1].date()} ({len(train)} Sessions)  |  QUARANTAENE "
+      f"(nur fuer /colab): ab {QUARANTAENE_AB.date()} ({n_hold} Sessions)\n")
 
 COST  = COST_RT_BPS / 1e4
 SLIP  = STOP_SLIP_BPS / 1e4
@@ -361,7 +374,8 @@ def s4_tom():
         halte = naechste[:3]
         if len(halte) < 3:
             continue
-        for i, d in enumerate(halte):
+        kosten_gebucht = False
+        for d in halte:
             g = train_full.loc[d, "ret_full"]
             if not np.isfinite(g):
                 continue
@@ -372,7 +386,8 @@ def s4_tom():
                     continue
                 buchung = nachher[0]
             brutto[buchung] += g
-            c = COST if i == 0 else 0.0
+            c = 0.0 if kosten_gebucht else COST   # ein Round-Trip pro Fenster,
+            kosten_gebucht = True                 # am ersten wirklich gebuchten Tag
             cost[buchung] += c
             ret[buchung] += g - c
     return ret, cost, brutto
@@ -484,10 +499,9 @@ if tlt is None:
 # 5) KENNZAHLEN + TABELLE
 # ------------------------------------------------------------------
 def kennzahlen(name, ret, cost, brutto):
-    ret, brutto = ret.fillna(0), brutto.fillna(0)
-    cost = cost.where(brutto != 0, 0.0).fillna(0)    # keine Kosten ohne Trade
+    ret, cost, brutto = ret.fillna(0), cost.fillna(0), brutto.fillna(0)
     n_jahre = len(ret) / 252
-    aktiv = brutto != 0
+    aktiv = cost > 0        # jede Strategie bucht Kosten genau bei einem Trade
     equity = (1 + ret).cumprod()
     cagr = equity.iloc[-1] ** (1 / n_jahre) - 1 if n_jahre > 0 else np.nan
     sharpe = ret.mean() / ret.std() * math.sqrt(252) if ret.std() > 0 else np.nan

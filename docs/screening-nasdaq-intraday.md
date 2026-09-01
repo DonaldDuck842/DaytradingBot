@@ -49,11 +49,10 @@ Round-Trip + 1,0 bps Stop-Slippage.
 - Dukascopy `USATECHIDXUSD`, 1-Min-BID-Kerzen ab 2011-09 (frei, ohne Registrierung);
   Monat im URL-Pfad 0-indexiert; 24-Byte-Records `>u4×5 + f4`, Reihenfolge Open/Close/Low/High,
   Preis = int/1000; Zeitstempel UTC.
-- **Holdout:** die jüngsten 30 % der Sessions (Startdatum wird beim Triage-Lauf ausgegeben,
-  ≈ ab Mitte 2022). Das Datenende ist im Skript fest auf 2026-08-28 gepinnt, damit die
-  Quarantäne-Grenze über Wiederholungsläufe stabil bleibt. Der Holdout wird genau einmal
-  verschossen — in `/colab`, für den einen Kandidaten, der die Triage-Schwelle deutlich
-  überschreitet. Danach ist er verbrannt.
+- **Holdout:** fest gepinnt auf **ab 2022-04-01** (~jüngste 30 % bei Datenende 2026-08-28,
+  ebenfalls gepinnt) — dadurch ist die Grenze über Wiederholungsläufe stabil. Der Holdout
+  wird genau einmal verschossen — in `/colab`, für den einen Kandidaten, der die
+  Triage-Schwelle deutlich überschreitet. Danach ist er verbrannt.
 
 ## Nächster Schritt
 
