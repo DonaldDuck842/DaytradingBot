@@ -12,11 +12,13 @@
 #           wird hier NIE angefasst — er gehoert dem einen /colab-Test.
 # Regeln:   EIN fester Parametersatz pro Idee, kein Sweep, keine Optimierung.
 #           Signale nutzen ausschliesslich Information vor dem Einstieg.
-# Laufzeit: erste Ausfuehrung ~5-10 Min (Download ~3.800 Tagesdateien),
-#           danach <1 Min dank Cache in /content/dk_cache
+# Laufzeit: erste Ausfuehrung ~10-20 Min (Download ~3.800 Tagesdateien,
+#           gedrosselt — Dukascopy blockt aggressive Parallel-Downloads),
+#           danach <1 Min dank Cache in /content/dk_cache. Ein abgebrochener
+#           Lauf darf einfach neu gestartet werden: der Cache bleibt.
 # =========================================================================
 
-import warnings, os, lzma, time, math, sys
+import warnings, os, lzma, time, math, sys, threading
 import datetime as dt
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -39,7 +41,9 @@ QUARANTAENE_AB   = pd.Timestamp("2022-04-01")  # FEST GEPINNT (~juengste 30%):
 COST_RT_BPS      = 1.0                   # Round-Trip-Kosten pro Trade (MNQ + Puffer)
 STOP_SLIP_BPS    = 1.0                   # Zusatz-Slippage, wenn ein Stop ausloest
 SUBSAMPLE_START  = "2018-01-01"          # zweite Sharpe-Spalte (Regime-Check)
-N_JOBS           = 48                    # parallele Downloads
+N_JOBS           = 6                     # parallele Downloads — NIEDRIG lassen:
+                                         # Dukascopy drosselt ab ~10 parallelen
+                                         # Zugriffen und blockt dann fast alles
 CACHE_DIR        = "/content/dk_cache"   # Rohdaten-Cache (ausserhalb Colab: ./dk_cache)
 INSTRUMENT       = "USATECHIDXUSD"       # Nasdaq-100-CFD im Dukascopy-Datafeed
 
@@ -73,7 +77,23 @@ def tage_liste():
         d += dt.timedelta(days=1)
     return out
 
-def lade_tag(d):
+# Browser-Header + Session pro Thread: der Datafeed lehnt die Default-UA von
+# python-requests teils ab und honoriert Connection-Reuse.
+HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"),
+    "Accept": "*/*",
+    "Referer": "https://freeserv.dukascopy.com/2.0/",
+}
+_tls = threading.local()
+def _session():
+    if not hasattr(_tls, "s"):
+        s = requests.Session()
+        s.headers.update(HEADERS)
+        _tls.s = s
+    return _tls.s
+
+def lade_tag(d, versuche=2):
     """Laedt eine Tagesdatei (Cache zuerst). Rueckgabe: (datum, bytes|None, status)."""
     fn = os.path.join(CACHE_DIR, f"{d.isoformat()}.bi5")
     if os.path.exists(fn):
@@ -82,9 +102,10 @@ def lade_tag(d):
         return d, (raw if raw else None), ("ok" if raw else "leer")
     url = (f"https://datafeed.dukascopy.com/datafeed/{INSTRUMENT}/"
            f"{d.year}/{d.month-1:02d}/{d.day:02d}/BID_candles_min_1.bi5")
-    for versuch in range(3):
+    grund = "unbekannt"
+    for versuch in range(versuche):
         try:
-            r = requests.get(url, timeout=25)
+            r = _session().get(url, timeout=30)
             if r.status_code == 404 or (r.status_code == 200 and len(r.content) == 0):
                 # Nur als Feiertag cachen, wenn der Tag sicher publiziert ist —
                 # sonst wuerde ein noch fehlender junger Tag dauerhaft fehlen.
@@ -99,33 +120,87 @@ def lade_tag(d):
                     f.write(r.content)
                 os.replace(tmp, fn)
                 return d, r.content, "ok"
-        except requests.RequestException:
-            pass
-        time.sleep(1 + versuch)
-    return d, None, "fehler"              # nach 3 Versuchen aufgeben (Luecke!)
+            grund = f"HTTP {r.status_code}"
+        except requests.RequestException as e:
+            grund = type(e).__name__
+        time.sleep(min(2 ** versuch, 15))  # exponentielles Backoff gegen Rate-Limit
+    return d, None, f"fehler:{grund}"      # aufgegeben — Durchgang 2 versucht es erneut
 
 tage = tage_liste()
 print(f"Lade {len(tage)} Handelstage {START} .. {DATEN_ENDE} von Dukascopy ...")
-rohdaten, fehl_tage, fertig, t0 = {}, set(), 0, time.time()
+rohdaten, fehl_tage, gruende, fertig, t0 = {}, set(), {}, 0, time.time()
+streak = 0            # Schutzschalter: lange Fehlerserie = Server blockt komplett
 with ThreadPoolExecutor(max_workers=N_JOBS) as ex:
     futs = {ex.submit(lade_tag, d): d for d in tage}
     for fut in as_completed(futs):
         d, raw, status = fut.result()
         if raw:
             rohdaten[d] = raw
-        elif status == "fehler":
+        elif status.startswith("fehler"):
             fehl_tage.add(d)
+            g = status.split(":", 1)[1]
+            gruende[g] = gruende.get(g, 0) + 1
+        streak = streak + 1 if status.startswith("fehler") else 0
         fertig += 1
         if fertig % max(1, len(tage)//10) == 0:
-            print(f"  {fertig}/{len(tage)} Dateien, {len(rohdaten)} mit Daten "
-                  f"({time.time()-t0:.0f}s)")
+            print(f"  {fertig}/{len(tage)} Dateien, {len(rohdaten)} mit Daten, "
+                  f"{len(fehl_tage)} Fehler ({time.time()-t0:.0f}s)")
+        if streak >= 150:
+            print("  Massives Blocken erkannt — Parallel-Durchgang abgebrochen, "
+                  "Rest geht in den langsamen Durchgang 2.")
+            ex.shutdown(wait=False, cancel_futures=True)
+            abbruch = True
+            break
+    else:
+        abbruch = False
+    if abbruch:                            # nicht mehr Gelaufenes einsammeln
+        for fut, d in futs.items():
+            if fut.cancelled() or not fut.done():
+                fehl_tage.add(d)
+            elif d not in rohdaten and d not in fehl_tage:
+                d2, raw, status = fut.result()
+                if raw:
+                    rohdaten[d] = raw
+                elif status.startswith("fehler"):
+                    fehl_tage.add(d)
+if gruende:
+    print(f"Fehlergruende Durchgang 1: {gruende}")
+
+# Zweiter, langsamer Durchgang fuer die Nachzuegler (sequentiell, mit Pause) —
+# faengt Tage ein, die im Parallel-Durchgang am Rate-Limit gescheitert sind.
 if fehl_tage:
-    print(f"WARNUNG: {len(fehl_tage)} Tage nach 3 Versuchen ohne Antwort — Renditen "
-          "ueber diese Luecken werden maskiert.")
+    rest = sorted(fehl_tage)
+    print(f"{len(rest)} Tage fehlgeschlagen — zweiter, langsamer Durchgang ...")
+    fehl_tage, serie = set(), 0
+    for i, d in enumerate(rest):
+        d2, raw, status = lade_tag(d, versuche=3)
+        if raw:
+            rohdaten[d] = raw
+            serie = 0
+        elif status.startswith("fehler"):
+            fehl_tage.add(d)
+            serie += 1
+        else:
+            serie = 0
+        if serie >= 30:                   # Server blockt weiterhin: aufgeben,
+            fehl_tage.update(rest[i+1:])  # Rest als Luecken markieren
+            print("  Server blockt weiterhin — zweiter Durchgang abgebrochen. "
+                  "Zelle spaeter einfach erneut ausfuehren (Cache bleibt erhalten).")
+            break
+        time.sleep(0.25)
+        if (i + 1) % max(1, len(rest)//10) == 0:
+            print(f"  Nachzuegler {i+1}/{len(rest)}, jetzt {len(rohdaten)} mit Daten")
+
+if fehl_tage:
+    print(f"WARNUNG: {len(fehl_tage)} Tage endgueltig ohne Antwort — Renditen ueber "
+          "diese Luecken werden maskiert.")
 
 if len(rohdaten) < 1500:
-    sys.exit(f"ABBRUCH: nur {len(rohdaten)} Tagesdateien mit Daten — Dukascopy nicht "
-             "erreichbar oder Instrumentcode falsch. Bitte spaeter erneut versuchen.")
+    sys.exit(f"ABBRUCH: nur {len(rohdaten)} Tagesdateien mit Daten. Haeufigste Ursache: "
+             "Dukascopy-Rate-Limit (Fehlergruende oben, z.B. HTTP 503/403) — die Zelle "
+             "in 10-15 Minuten einfach ERNEUT ausfuehren, der Cache behaelt alle bereits "
+             f"geladenen Tage ({len(rohdaten)} sind gesichert). Hilft das nicht: "
+             "N_JOBS auf 2 senken.")
 
 # --- Binaerformat: 24 Bytes/Record, Big-Endian.
 #     Dokumentiert: [Sek-Offset ab 00:00 UTC, Open, Close, Low, High, Volumen].
